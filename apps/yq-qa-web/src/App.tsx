@@ -12,24 +12,37 @@ import {
   RefreshCw,
   Save,
   Settings,
+  LogOut,
+  Play,
   XCircle,
+  RotateCw,
+  Square,
 } from "lucide-react";
 import {
+  ApiError,
+  clearAuthToken,
   createQaTask,
   getConfig,
+  getCurrentUser,
+  getMethodHealth,
   getDocumentJob,
   getInitialBackendUrl,
   getQaTask,
+  login,
   listMethodDocuments,
   listDocumentJobs,
   listMethods,
   listQaTasks,
+  logout,
   openEventStream,
+  restartMethod,
   saveBackendUrl,
+  startMethod,
+  stopMethod,
   updateConfig,
   uploadDocuments,
 } from "./api";
-import type { DocumentJob, MergeStrategy, QaTask, RagMethod, RuntimeConfig } from "./types";
+import type { AuthUser, DocumentJob, MergeStrategy, QaTask, RagMethod, RuntimeConfig } from "./types";
 import type { MethodDocument } from "./types";
 
 type View = "config" | "documents" | "qa";
@@ -58,6 +71,9 @@ export function App() {
   const [documentJobs, setDocumentJobs] = useState<DocumentJob[]>([]);
   const [status, setStatus] = useState("未连接");
   const [error, setError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
 
   async function refreshAll() {
     setError(null);
@@ -74,15 +90,82 @@ export function App() {
       setQaTasks(nextTasks.tasks);
       setDocumentJobs(nextJobs.jobs);
       setStatus("已连接");
+      setAuthRequired(false);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearAuthToken();
+        setCurrentUser(null);
+        setAuthRequired(true);
+        setStatus("未登录");
+        setError(null);
+        return;
+      }
       setStatus("连接失败");
       setError(errorMessage(err));
     }
   }
 
   useEffect(() => {
-    void refreshAll();
+    void bootstrap();
   }, []);
+
+  async function bootstrap() {
+    setError(null);
+    saveBackendUrl(backendUrl);
+    try {
+      const user = await getCurrentUser(backendUrl);
+      setCurrentUser(user);
+      setAuthChecked(true);
+      await refreshAll();
+    } catch (err) {
+      setAuthChecked(true);
+      if (err instanceof ApiError && err.status === 401) {
+        clearAuthToken();
+        setCurrentUser(null);
+        setAuthRequired(true);
+        setStatus("未登录");
+        return;
+      }
+      if (err instanceof ApiError && err.status === 404) {
+        setCurrentUser(null);
+        setAuthRequired(false);
+        await refreshAll();
+        return;
+      }
+      setStatus("连接失败");
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleLogin(username: string, password: string) {
+    setError(null);
+    saveBackendUrl(backendUrl);
+    const response = await login(backendUrl, username, password);
+    setCurrentUser(response.user);
+    setAuthRequired(false);
+    await refreshAll();
+  }
+
+  async function handleLogout() {
+    await logout(backendUrl);
+    setCurrentUser(null);
+    setAuthRequired(true);
+    setStatus("未登录");
+  }
+
+  if (!authChecked) {
+    return <div className="loading-screen"><Loader2 className="spin" size={24} />正在连接</div>;
+  }
+
+  if (authRequired || (!currentUser && status === "未登录")) {
+    return (
+      <LoginPage
+        backendUrl={backendUrl}
+        setBackendUrl={setBackendUrl}
+        onLogin={handleLogin}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -111,6 +194,14 @@ export function App() {
             </button>
           </div>
           <StatusPill status={status} />
+          {currentUser && (
+            <div className="user-control">
+              <span>{currentUser.display_name || currentUser.username}</span>
+              <button className="icon-button" onClick={() => void handleLogout()} title="退出登录">
+                <LogOut size={18} />
+              </button>
+            </div>
+          )}
         </header>
 
         {error && <Notice type="error" message={error} />}
@@ -149,6 +240,61 @@ export function App() {
   );
 }
 
+function LoginPage({
+  backendUrl,
+  setBackendUrl,
+  onLogin,
+}: {
+  backendUrl: string;
+  setBackendUrl: (value: string) => void;
+  onLogin: (username: string, password: string) => Promise<void>;
+}) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onLogin(username, password);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="login-screen">
+      <section className="login-panel">
+        <div className="brand login-brand">
+          <Bot size={26} />
+          <div>
+            <strong>YQ-QA</strong>
+            <span>登录后继续</span>
+          </div>
+        </div>
+        <Field label="Backend">
+          <input value={backendUrl} onChange={(event) => setBackendUrl(event.target.value)} />
+        </Field>
+        <Field label="用户名">
+          <input value={username} onChange={(event) => setUsername(event.target.value)} />
+        </Field>
+        <Field label="密码">
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </Field>
+        {error && <Notice type="error" message={error} />}
+        <button className="primary" disabled={!username || !password || submitting} onClick={() => void submit()}>
+          {submitting ? <Loader2 className="spin" size={18} /> : <Bot size={18} />}
+          登录
+        </button>
+      </section>
+    </main>
+  );
+}
+
 function ConfigPage({
   backendUrl,
   config,
@@ -166,8 +312,37 @@ function ConfigPage({
 }) {
   const [saving, setSaving] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [methodBusy, setMethodBusy] = useState<Record<string, string>>({});
+  const [methodHealth, setMethodHealth] = useState<Record<string, string>>({});
 
   const methodIds = methods.map((method) => method.method_id);
+
+  async function runMethodAction(
+    methodId: string,
+    action: "start" | "stop" | "restart" | "health",
+  ) {
+    setMethodBusy((current) => ({ ...current, [methodId]: action }));
+    setError(null);
+    try {
+      if (action === "start") await startMethod(backendUrl, methodId);
+      if (action === "stop") await stopMethod(backendUrl, methodId);
+      if (action === "restart") await restartMethod(backendUrl, methodId);
+      if (action === "health") {
+        const health = await getMethodHealth(backendUrl, methodId);
+        const status = typeof health.status === "string" ? health.status : "unknown";
+        setMethodHealth((current) => ({ ...current, [methodId]: status }));
+      }
+      await refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setMethodBusy((current) => {
+        const next = { ...current };
+        delete next[methodId];
+        return next;
+      });
+    }
+  }
 
   async function save() {
     setSaving(true);
@@ -188,61 +363,152 @@ function ConfigPage({
   }
 
   return (
-    <section className="panel-grid two">
-      <div className="panel">
-        <PanelTitle icon={<Settings />} title="后端配置" />
-        <Field label="RAG Manager">
-          <input value={config.rag_manager_base_url} onChange={(event) => setConfig({ ...config, rag_manager_base_url: event.target.value })} />
-        </Field>
-        <Field label="上传目录">
-          <input value={config.upload_dir} onChange={(event) => setConfig({ ...config, upload_dir: event.target.value })} />
-        </Field>
-        <div className="field-row">
-          <Field label="问答并发">
-            <input type="number" min={1} value={config.max_concurrent_tasks} onChange={(event) => setConfig({ ...config, max_concurrent_tasks: Number(event.target.value) })} />
+    <section className="panel-grid">
+      <div className="panel-grid two">
+        <div className="panel">
+          <PanelTitle icon={<Settings />} title="后端配置" />
+          <Field label="RAG Manager">
+            <input value={config.rag_manager_base_url} onChange={(event) => setConfig({ ...config, rag_manager_base_url: event.target.value })} />
           </Field>
-          <Field label="入库并发">
-            <input type="number" min={1} value={config.max_concurrent_ingestion_jobs} onChange={(event) => setConfig({ ...config, max_concurrent_ingestion_jobs: Number(event.target.value) })} />
+          <Field label="上传目录">
+            <input value={config.upload_dir} onChange={(event) => setConfig({ ...config, upload_dir: event.target.value })} />
+          </Field>
+          <div className="field-row">
+            <Field label="问答并发">
+              <input type="number" min={1} value={config.max_concurrent_tasks} onChange={(event) => setConfig({ ...config, max_concurrent_tasks: Number(event.target.value) })} />
+            </Field>
+            <Field label="入库并发">
+              <input type="number" min={1} value={config.max_concurrent_ingestion_jobs} onChange={(event) => setConfig({ ...config, max_concurrent_ingestion_jobs: Number(event.target.value) })} />
+            </Field>
+          </div>
+          <Field label="默认 Method">
+            <MultiSelect
+              options={methodIds}
+              selected={config.default_method_ids}
+              onChange={(selected) => setConfig({ ...config, default_method_ids: selected })}
+            />
           </Field>
         </div>
-        <Field label="默认 Method">
-          <MultiSelect
-            options={methodIds}
-            selected={config.default_method_ids}
-            onChange={(selected) => setConfig({ ...config, default_method_ids: selected })}
-          />
-        </Field>
+
+        <div className="panel">
+          <PanelTitle icon={<Bot />} title="答案合并" />
+          <label className="toggle">
+            <input type="checkbox" checked={config.merge_enabled} onChange={(event) => setConfig({ ...config, merge_enabled: event.target.checked })} />
+            <span>启用合并模型</span>
+          </label>
+          <Field label="Base URL">
+            <input value={config.merge_base_url || ""} onChange={(event) => setConfig({ ...config, merge_base_url: event.target.value })} />
+          </Field>
+          <Field label="Model">
+            <input value={config.merge_model || ""} onChange={(event) => setConfig({ ...config, merge_model: event.target.value })} />
+          </Field>
+          <Field label={config.merge_api_key_set ? `API Key (${config.merge_api_key_masked})` : "API Key"}>
+            <input type="password" value={apiKeyInput} onChange={(event) => setApiKeyInput(event.target.value)} placeholder="留空则不修改" />
+          </Field>
+          <div className="field-row">
+            <Field label="Timeout">
+              <input type="number" min={1} value={config.merge_timeout_seconds} onChange={(event) => setConfig({ ...config, merge_timeout_seconds: Number(event.target.value) })} />
+            </Field>
+            <Field label="Temperature">
+              <input type="number" min={0} max={2} step={0.1} value={config.merge_temperature} onChange={(event) => setConfig({ ...config, merge_temperature: Number(event.target.value) })} />
+            </Field>
+          </div>
+          <button className="primary" onClick={() => void save()} disabled={saving}>
+            {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+            保存配置
+          </button>
+        </div>
       </div>
 
-      <div className="panel">
-        <PanelTitle icon={<Bot />} title="答案合并" />
-        <label className="toggle">
-          <input type="checkbox" checked={config.merge_enabled} onChange={(event) => setConfig({ ...config, merge_enabled: event.target.checked })} />
-          <span>启用合并模型</span>
-        </label>
-        <Field label="Base URL">
-          <input value={config.merge_base_url || ""} onChange={(event) => setConfig({ ...config, merge_base_url: event.target.value })} />
-        </Field>
-        <Field label="Model">
-          <input value={config.merge_model || ""} onChange={(event) => setConfig({ ...config, merge_model: event.target.value })} />
-        </Field>
-        <Field label={config.merge_api_key_set ? `API Key (${config.merge_api_key_masked})` : "API Key"}>
-          <input type="password" value={apiKeyInput} onChange={(event) => setApiKeyInput(event.target.value)} placeholder="留空则不修改" />
-        </Field>
-        <div className="field-row">
-          <Field label="Timeout">
-            <input type="number" min={1} value={config.merge_timeout_seconds} onChange={(event) => setConfig({ ...config, merge_timeout_seconds: Number(event.target.value) })} />
-          </Field>
-          <Field label="Temperature">
-            <input type="number" min={0} max={2} step={0.1} value={config.merge_temperature} onChange={(event) => setConfig({ ...config, merge_temperature: Number(event.target.value) })} />
-          </Field>
-        </div>
-        <button className="primary" onClick={() => void save()} disabled={saving}>
-          {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
-          保存配置
-        </button>
-      </div>
+      <MethodManagerPanel
+        methods={methods}
+        busy={methodBusy}
+        health={methodHealth}
+        onAction={runMethodAction}
+      />
     </section>
+  );
+}
+
+function MethodManagerPanel({
+  methods,
+  busy,
+  health,
+  onAction,
+}: {
+  methods: RagMethod[];
+  busy: Record<string, string>;
+  health: Record<string, string>;
+  onAction: (methodId: string, action: "start" | "stop" | "restart" | "health") => Promise<void>;
+}) {
+  return (
+    <div className="panel">
+      <div className="panel-title-row">
+        <PanelTitle icon={<Database />} title="Method 管理" />
+      </div>
+      <div className="method-grid">
+        {methods.length === 0 && <div className="empty">暂无 method</div>}
+        {methods.map((method) => {
+          const methodBusy = busy[method.method_id];
+          const status = method.status || "unknown";
+          return (
+            <article className="method-card" key={method.method_id}>
+              <div className="method-card-head">
+                <div>
+                  <strong>{method.display_name || method.method_id}</strong>
+                  <div className="meta">{method.method_id}</div>
+                </div>
+                <StatusBadge status={status} />
+              </div>
+              <div className="method-facts">
+                <span>{method.backend_type || "backend unknown"}</span>
+                <span>{method.worker_url || "worker 未注册"}</span>
+                {method.pid ? <span>pid {method.pid}</span> : <span>pid -</span>}
+                {health[method.method_id] && <span>health {health[method.method_id]}</span>}
+              </div>
+              <div className="method-actions">
+                <button
+                  className="secondary"
+                  disabled={Boolean(methodBusy) || status === "running"}
+                  onClick={() => void onAction(method.method_id, "start")}
+                  type="button"
+                >
+                  {methodBusy === "start" ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                  启动
+                </button>
+                <button
+                  className="secondary"
+                  disabled={Boolean(methodBusy) || status !== "running"}
+                  onClick={() => void onAction(method.method_id, "stop")}
+                  type="button"
+                >
+                  {methodBusy === "stop" ? <Loader2 className="spin" size={16} /> : <Square size={16} />}
+                  停止
+                </button>
+                <button
+                  className="secondary"
+                  disabled={Boolean(methodBusy)}
+                  onClick={() => void onAction(method.method_id, "restart")}
+                  type="button"
+                >
+                  {methodBusy === "restart" ? <Loader2 className="spin" size={16} /> : <RotateCw size={16} />}
+                  重启
+                </button>
+                <button
+                  className="secondary"
+                  disabled={Boolean(methodBusy) || status !== "running"}
+                  onClick={() => void onAction(method.method_id, "health")}
+                  type="button"
+                >
+                  {methodBusy === "health" ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+                  健康
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

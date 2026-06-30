@@ -100,6 +100,29 @@ class CancelResponse(BaseModel):
     message: str
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class AuthUser(BaseModel):
+    user_id: str
+    username: str
+    display_name: str | None = None
+    role: str = "user"
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    user: AuthUser
+
+
+class LogoutResponse(BaseModel):
+    ok: bool = True
+
+
 class TaskStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -308,4 +331,3 @@ class DocumentJobDetail(DocumentJobSummary):
 class DocumentJobList(BaseModel):
     jobs: list[DocumentJobSummary]
     total: int
-

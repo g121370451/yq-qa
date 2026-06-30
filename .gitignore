@@ -72,6 +72,7 @@ apps/*/data/
 apps/*/logs/
 apps/*/outputs/
 apps/rag-openviking-bot/.openviking/
+data/uploads/*
 
 # Evaluation datasets and generated artifacts are local/large.
 apps/rag-manager-eval/data/

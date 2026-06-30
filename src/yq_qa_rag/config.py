@@ -66,6 +66,12 @@ class AppConfig:
     qa_merge_model: str = ""
     qa_merge_timeout_seconds: float = 300.0
     qa_merge_temperature: float = 0.2
+    auth_enabled: bool = True
+    auth_jwt_secret: str = ""
+    auth_token_expire_minutes: int = 720
+    auth_admin_username: str = "admin"
+    auth_admin_password: str = ""
+    auth_admin_display_name: str = "Administrator"
 
     openviking_rag_project_path: str = r"D:\project\mine\OpenViking\benchmark\RAG"
     openviking_root_path: str = r"D:\project\mine\OpenViking"
@@ -168,6 +174,14 @@ class AppConfig:
             or os.getenv("OPENAI_MODEL", ""),
             qa_merge_timeout_seconds=_env_float("YQ_QA_MERGE_TIMEOUT_SECONDS", 300.0),
             qa_merge_temperature=_env_float("YQ_QA_MERGE_TEMPERATURE", 0.2),
+            auth_enabled=_env_bool("YQ_QA_AUTH_ENABLED", True),
+            auth_jwt_secret=os.getenv("YQ_QA_JWT_SECRET", ""),
+            auth_token_expire_minutes=_env_int("YQ_QA_TOKEN_EXPIRE_MINUTES", 720),
+            auth_admin_username=os.getenv("YQ_QA_ADMIN_USERNAME", "admin"),
+            auth_admin_password=os.getenv("YQ_QA_ADMIN_PASSWORD", ""),
+            auth_admin_display_name=os.getenv(
+                "YQ_QA_ADMIN_DISPLAY_NAME", "Administrator"
+            ),
             openviking_rag_project_path=os.getenv(
                 "OPENVIKING_RAG_PROJECT_PATH",
                 r"D:\project\mine\OpenViking\benchmark\RAG",
@@ -317,6 +331,13 @@ class AppConfig:
                 "timeout_seconds": self.qa_merge_timeout_seconds,
                 "temperature": self.qa_merge_temperature,
                 "api_key": _mask_secret(self.qa_merge_api_key),
+            },
+            "auth": {
+                "enabled": self.auth_enabled,
+                "token_expire_minutes": self.auth_token_expire_minutes,
+                "admin_username": self.auth_admin_username,
+                "admin_password_set": bool(self.auth_admin_password),
+                "jwt_secret_set": bool(self.auth_jwt_secret),
             },
         }
 

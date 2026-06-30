@@ -25,7 +25,10 @@ def main() -> None:
     parser.add_argument("--log-level", default="info")
     args = parser.parse_args()
 
-    load_env_file(args.env_file)
+    env_file = args.env_file
+    if env_file is None and Path(".env.yq-qa").exists():
+        env_file = ".env.yq-qa"
+    load_env_file(env_file)
     backend = args.backend.replace("-", "_") if args.backend is not None else None
     config = AppConfig.from_env(backend=backend)  # type: ignore[arg-type]
     if args.db:
@@ -39,6 +42,7 @@ def main() -> None:
             {
                 "service_url": f"http://{args.host}:{port}",
                 "swagger_url": f"http://{args.host}:{port}/docs",
+                "env_file": str(Path(env_file).expanduser().resolve()) if env_file else None,
                 "note": "Runtime QA settings are stored in SQLite and can be updated by the frontend via /v1/config.",
                 **config.public_dict(),
             },

@@ -1,6 +1,20 @@
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type MergeStrategy = "auto" | "none" | "llm";
 
+export interface AuthUser {
+  user_id: string;
+  username: string;
+  display_name?: string | null;
+  role: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: "bearer";
+  expires_at: string;
+  user: AuthUser;
+}
+
 export interface RuntimeConfig {
   rag_manager_base_url: string;
   rag_manager_timeout_seconds: number;
@@ -26,7 +40,18 @@ export interface RagMethod {
   display_name?: string | null;
   status?: string;
   worker_url?: string | null;
+  worker_port?: number | null;
+  pid?: number | null;
   enabled?: boolean;
+}
+
+export interface MethodRuntime {
+  method_id: string;
+  status: string;
+  worker_url?: string | null;
+  worker_port?: number | null;
+  pid?: number | null;
+  message?: string | null;
 }
 
 export interface Source {

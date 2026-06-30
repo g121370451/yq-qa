@@ -1,6 +1,18 @@
-import type { DocumentJob, MethodDocumentList, QaTask, RuntimeConfig, RagMethod, TaskEvent } from "./types";
+import type { AuthUser, DocumentJob, LoginResponse, MethodDocumentList, MethodRuntime, QaTask, RuntimeConfig, RagMethod, TaskEvent } from "./types";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:18082";
+const TOKEN_KEY = "yq_auth_token";
+
+export class ApiError extends Error {
+  status: number;
+  body: string;
+
+  constructor(status: number, body: string) {
+    super(body || `HTTP ${status}`);
+    this.status = status;
+    this.body = body;
+  }
+}
 
 export function getInitialBackendUrl(): string {
   return localStorage.getItem("yq_backend_url") || DEFAULT_BASE_URL;
@@ -10,18 +22,62 @@ export function saveBackendUrl(url: string): void {
   localStorage.setItem("yq_backend_url", url.replace(/\/$/, ""));
 }
 
+export function getAuthToken(): string {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function saveAuthToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearAuthToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
 async function request<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = headersToRecord(init?.headers);
+  if (!(init?.body instanceof FormData)) headers["Content-Type"] = "application/json";
+  if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
-    headers: init?.body instanceof FormData
-      ? init.headers
-      : { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers,
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    throw new ApiError(response.status, text || `${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
+}
+
+function headersToRecord(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+  if (Array.isArray(headers)) return Object.fromEntries(headers);
+  return { ...headers };
+}
+
+export async function login(baseUrl: string, username: string, password: string): Promise<LoginResponse> {
+  const response = await request<LoginResponse>(baseUrl, "/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+  saveAuthToken(response.access_token);
+  return response;
+}
+
+export function getCurrentUser(baseUrl: string): Promise<AuthUser | null> {
+  return request<AuthUser | null>(baseUrl, "/v1/auth/me");
+}
+
+export async function logout(baseUrl: string): Promise<void> {
+  try {
+    await request(baseUrl, "/v1/auth/logout", { method: "POST", body: "{}" });
+  } catch {
+    // Local logout should still succeed if the token is already invalid.
+  } finally {
+    clearAuthToken();
+  }
 }
 
 export function getConfig(baseUrl: string): Promise<RuntimeConfig> {
@@ -50,6 +106,35 @@ export async function listMethodDocuments(baseUrl: string, methodId: string): Pr
     documents: normalizeDocuments(payload.documents ?? payload.resources ?? payload.items ?? payload.data),
     raw: payload,
   };
+}
+
+export function getMethodRuntime(baseUrl: string, methodId: string): Promise<MethodRuntime> {
+  return request<MethodRuntime>(baseUrl, `/v1/rag-methods/${encodeURIComponent(methodId)}/runtime`);
+}
+
+export function getMethodHealth(baseUrl: string, methodId: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(baseUrl, `/v1/rag-methods/${encodeURIComponent(methodId)}/health`);
+}
+
+export function startMethod(baseUrl: string, methodId: string): Promise<MethodRuntime> {
+  return request<MethodRuntime>(baseUrl, `/v1/rag-methods/${encodeURIComponent(methodId)}/start`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function stopMethod(baseUrl: string, methodId: string): Promise<MethodRuntime> {
+  return request<MethodRuntime>(baseUrl, `/v1/rag-methods/${encodeURIComponent(methodId)}/stop`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+export function restartMethod(baseUrl: string, methodId: string): Promise<MethodRuntime> {
+  return request<MethodRuntime>(baseUrl, `/v1/rag-methods/${encodeURIComponent(methodId)}/restart`, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 function normalizeDocuments(value: unknown): Record<string, unknown>[] {
@@ -121,7 +206,7 @@ export function openEventStream(
   onEvent: (event: TaskEvent | Record<string, unknown>, eventType: string) => void,
   onError?: (error: Event) => void,
 ): EventSource {
-  const source = new EventSource(`${baseUrl}${path}`);
+  const source = new EventSource(`${baseUrl}${streamPath(path)}`);
   const eventTypes = [
     "queued",
     "running",
@@ -145,4 +230,11 @@ export function openEventStream(
     onError?.(error);
   };
   return source;
+}
+
+function streamPath(path: string): string {
+  const token = getAuthToken();
+  if (!token) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}access_token=${encodeURIComponent(token)}`;
 }

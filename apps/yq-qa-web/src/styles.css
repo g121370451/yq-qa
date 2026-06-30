@@ -107,6 +107,37 @@ button:disabled {
   background: #f4f5f1;
 }
 
+.loading-screen,
+.login-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: #f4f5f1;
+}
+
+.loading-screen {
+  gap: 10px;
+  color: #526059;
+}
+
+.login-panel {
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid #dce0d8;
+  border-radius: 8px;
+  padding: 22px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(22, 28, 24, 0.08);
+}
+
+.login-brand {
+  margin: -4px 0 18px;
+  color: #26322f;
+}
+
+.login-brand span {
+  color: #66706b;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -120,6 +151,15 @@ button:disabled {
   grid-template-columns: auto minmax(260px, 420px) 38px;
   align-items: center;
   gap: 10px;
+}
+
+.user-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: #3e4842;
+  font-size: 13px;
 }
 
 .backend-control label,
@@ -664,6 +704,56 @@ textarea {
 
 .method-meta {
   margin: 0 0 12px;
+}
+
+.method-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.method-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #e1e5df;
+  border-radius: 8px;
+  padding: 13px;
+  background: #fbfcfa;
+}
+
+.method-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.method-card-head strong {
+  overflow-wrap: anywhere;
+}
+
+.method-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.method-facts span {
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #51605a;
+  background: #eef2ec;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.method-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.method-actions .secondary {
+  min-width: 86px;
 }
 
 .badge {

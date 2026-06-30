@@ -21,6 +21,9 @@ deepread = [
     "requests>=2.31.0",
     "tiktoken>=0.7.0",
 ]
+test = [
+    "pytest>=8.0.0",
+]
 
 [project.scripts]
 rag-server = "yq_qa_rag.cli:main"

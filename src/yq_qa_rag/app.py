@@ -6,12 +6,13 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from starlette.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from yq_qa_rag import __version__
 from yq_qa_rag.adapters import DeepReadAdapter, OpenVikingRagAdapter, OVBotAdapter, RagAdapter
+from yq_qa_rag.auth import AuthContext, UserStore
 from yq_qa_rag.config import AppConfig
 from yq_qa_rag.document_runner import DocumentIngestionRunner
 from yq_qa_rag.models import (
@@ -25,6 +26,9 @@ from yq_qa_rag.models import (
     DocumentUploadCreated,
     EventType,
     HealthResponse,
+    LoginRequest,
+    LoginResponse,
+    LogoutResponse,
     QaCancelResponse,
     QaRuntimeConfig,
     QaRuntimeConfigPublic,
@@ -48,6 +52,7 @@ def create_app(config: AppConfig) -> FastAPI:
     adapter = _make_adapter(config)
     registry = RequestRegistry()
     task_store = TaskStore(config.qa_db_path)
+    user_store = UserStore(config.qa_db_path)
     default_runtime_config = _runtime_config_from_app_config(config)
     task_store.ensure_runtime_config(default_runtime_config)
     task_runner = QaTaskRunner(config, task_store)
@@ -61,12 +66,32 @@ def create_app(config: AppConfig) -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    user_store.ensure_admin(config)
+    app.state.auth_context = AuthContext(config, user_store)
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        context: AuthContext = request.app.state.auth_context
+        if (
+            context.enabled
+            and request.method != "OPTIONS"
+            and request.url.path.startswith("/v1/")
+            and request.url.path not in {"/v1/auth/login"}
+        ):
+            token = _request_token(request)
+            if not token:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "authentication required"},
+                )
+            try:
+                request.state.current_user = context.verify_token(token)
+            except Exception:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "invalid or expired token"},
+                )
+        return await call_next(request)
 
     @app.on_event("startup")
     async def startup() -> None:
@@ -78,6 +103,7 @@ def create_app(config: AppConfig) -> FastAPI:
         await document_runner.shutdown()
         await task_runner.shutdown()
         task_store.close()
+        user_store.close()
 
     @app.get("/health", response_model=HealthResponse, tags=["service"])
     async def health() -> HealthResponse:
@@ -117,6 +143,32 @@ def create_app(config: AppConfig) -> FastAPI:
     async def capabilities() -> CapabilitiesResponse:
         return adapter.capabilities()
 
+    @app.post("/v1/auth/login", response_model=LoginResponse, tags=["auth"])
+    async def login(request: LoginRequest) -> LoginResponse:
+        context: AuthContext = app.state.auth_context
+        if not context.enabled:
+            raise HTTPException(status_code=404, detail="auth is disabled")
+        user = context.user_store.authenticate(request.username, request.password)
+        if user is None:
+            raise HTTPException(status_code=401, detail="invalid username or password")
+        token, expires_at = context.issue_token(user)
+        return LoginResponse(
+            access_token=token,
+            expires_at=expires_at,
+            user=user.public(),
+        )
+
+    @app.get("/v1/auth/me", tags=["auth"])
+    async def me(request: Request):
+        context: AuthContext = app.state.auth_context
+        if not context.enabled:
+            return None
+        return request.state.current_user
+
+    @app.post("/v1/auth/logout", response_model=LogoutResponse, tags=["auth"])
+    async def logout() -> LogoutResponse:
+        return LogoutResponse(ok=True)
+
     @app.get("/v1/config", response_model=QaRuntimeConfigPublic, tags=["config"])
     async def get_runtime_config() -> QaRuntimeConfigPublic:
         return task_store.public_runtime_config(db_path=task_store.db_path)
@@ -139,6 +191,51 @@ def create_app(config: AppConfig) -> FastAPI:
     async def list_rag_method_documents(method_id: str) -> dict:
         try:
             return await RagManagerClient(task_store.get_runtime_config()).list_documents(
+                method_id=method_id
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/v1/rag-methods/{method_id}/runtime", tags=["rag-manager"])
+    async def rag_method_runtime(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).method_runtime(
+                method_id=method_id
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/v1/rag-methods/{method_id}/health", tags=["rag-manager"])
+    async def rag_method_health(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).method_health(
+                method_id=method_id
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/v1/rag-methods/{method_id}/start", tags=["rag-manager"])
+    async def start_rag_method(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).start_method(
+                method_id=method_id
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/v1/rag-methods/{method_id}/stop", tags=["rag-manager"])
+    async def stop_rag_method(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).stop_method(
+                method_id=method_id
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/v1/rag-methods/{method_id}/restart", tags=["rag-manager"])
+    async def restart_rag_method(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).restart_method(
                 method_id=method_id
             )
         except Exception as exc:
@@ -467,7 +564,12 @@ def create_app(config: AppConfig) -> FastAPI:
             message="cancel signal sent" if cancelled else "request is not active",
         )
 
-    return app
+    return CORSMiddleware(
+        app,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def _make_adapter(config: AppConfig) -> RagAdapter:
@@ -487,6 +589,15 @@ def _sse(event: StreamEvent) -> str:
 
 def _raw_sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _request_token(request: Request) -> str | None:
+    auth_header = request.headers.get("authorization") or ""
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() == "bearer" and token.strip():
+        return token.strip()
+    query_token = request.query_params.get("access_token")
+    return query_token.strip() if query_token else None
 
 
 def _runtime_config_from_app_config(config: AppConfig) -> QaRuntimeConfig:

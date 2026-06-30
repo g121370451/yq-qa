@@ -42,7 +42,8 @@ uv sync
 ## 配置
 
 QA 运行配置由前端通过接口写入后端，并持久化到 SQLite。
-所以 `rag-server` 可以不带 `.env` 启动。
+`rag-server` 默认会启用认证；如果当前目录存在 `.env.yq-qa`，
+启动时会自动读取它并打印配置文件路径。
 
 默认配置接口：
 
@@ -71,6 +72,19 @@ YQ_QA_MERGE_MODEL=replace-me
 YQ_QA_MERGE_ENABLED=false
 ```
 
+认证默认开启。首次启动前需要至少配置 token secret 和管理员初始密码：
+
+```env
+YQ_QA_AUTH_ENABLED=true
+YQ_QA_JWT_SECRET=replace-with-a-long-random-secret
+YQ_QA_TOKEN_EXPIRE_MINUTES=720
+YQ_QA_ADMIN_USERNAME=admin
+YQ_QA_ADMIN_PASSWORD=replace-me
+```
+
+首次启动且 `users` 表为空时，后端会用上面的管理员账号初始化用户。
+如果只做本机调试，可以显式设置 `YQ_QA_AUTH_ENABLED=false`。
+
 `.env.yq-qa.example` 只作为开发期“初始化默认值”示例，不是必需文件。
 
 ## 启动顺序
@@ -89,7 +103,7 @@ cd D:\project\mine\yq-qa
 uv run rag-server --host 127.0.0.1 --port 18082
 ```
 
-如果你想用环境变量给数据库里的首次配置提供默认值，也可以：
+也可以显式指定环境文件：
 
 ```powershell
 uv run rag-server --env-file .env.yq-qa --host 127.0.0.1 --port 18082
@@ -107,6 +121,33 @@ merge enabled/model/base_url
 ```
 
 API key 只会 mask 打印。
+
+## 管理 18082 进程
+
+查看 18082 端口对应的进程：
+
+```powershell
+$conn = Get-NetTCPConnection -LocalPort 18082 -State Listen
+$conn | Select-Object LocalAddress,LocalPort,OwningProcess
+Get-CimInstance Win32_Process -Filter "ProcessId = $($conn.OwningProcess)" |
+  Select-Object ProcessId,CommandLine
+```
+
+停止当前 QA 后端：
+
+```powershell
+$pid = (Get-NetTCPConnection -LocalPort 18082 -State Listen).OwningProcess
+Stop-Process -Id $pid
+```
+
+重启 QA 后端：
+
+```powershell
+cd D:\project\mine\yq-qa
+$conn = Get-NetTCPConnection -LocalPort 18082 -State Listen -ErrorAction SilentlyContinue
+if ($conn) { Stop-Process -Id $conn.OwningProcess }
+uv run rag-server --env-file .env.yq-qa --host 127.0.0.1 --port 18082
+```
 
 ## 主接口
 
