@@ -40,7 +40,7 @@ class OVBotAdapter:
             backend="ovbot",
             stream=True,
             citations=False,
-            sessions=True,
+            sessions=False,
             cancel=True,
             cancel_mode="best_effort",
             knowledge_manage=False,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 
 BackendName = Literal["openviking_rag", "deepread", "ovbot"]
@@ -53,6 +53,19 @@ def _env_float(name: str, default: float) -> float:
 class AppConfig:
     backend: BackendName = "openviking_rag"
     service_name: str = "rag-service"
+
+    qa_db_path: str = "data/yq-qa.sqlite3"
+    qa_rag_manager_base_url: str = "http://127.0.0.1:18081"
+    qa_rag_manager_timeout_seconds: float = 1200.0
+    qa_default_method_ids: list[str] = field(default_factory=list)
+    qa_max_concurrent_tasks: int = 4
+    qa_method_timeout_seconds: float = 1200.0
+    qa_merge_enabled: bool = False
+    qa_merge_base_url: str | None = None
+    qa_merge_api_key: str = ""
+    qa_merge_model: str = ""
+    qa_merge_timeout_seconds: float = 300.0
+    qa_merge_temperature: float = 0.2
 
     openviking_rag_project_path: str = r"D:\project\mine\OpenViking\benchmark\RAG"
     openviking_root_path: str = r"D:\project\mine\OpenViking"
@@ -134,7 +147,27 @@ class AppConfig:
 
         return cls(
             backend=selected_backend,  # type: ignore[arg-type]
-            service_name=os.getenv("SERVICE_NAME", f"{selected_backend}-rag"),
+            service_name=os.getenv("SERVICE_NAME", "yq-qa"),
+            qa_db_path=os.getenv("YQ_QA_DB", "data/yq-qa.sqlite3"),
+            qa_rag_manager_base_url=os.getenv(
+                "YQ_RAG_MANAGER_BASE_URL", "http://127.0.0.1:18081"
+            ).rstrip("/"),
+            qa_rag_manager_timeout_seconds=_env_float(
+                "YQ_QA_RAG_MANAGER_TIMEOUT_SECONDS", 1200.0
+            ),
+            qa_default_method_ids=_split_paths(os.getenv("YQ_QA_DEFAULT_METHOD_IDS")),
+            qa_max_concurrent_tasks=_env_int("YQ_QA_MAX_CONCURRENT_TASKS", 4),
+            qa_method_timeout_seconds=_env_float("YQ_QA_METHOD_TIMEOUT_SECONDS", 1200.0),
+            qa_merge_enabled=_env_bool("YQ_QA_MERGE_ENABLED", False),
+            qa_merge_base_url=os.getenv("YQ_QA_MERGE_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or None,
+            qa_merge_api_key=os.getenv("YQ_QA_MERGE_API_KEY")
+            or os.getenv("OPENAI_API_KEY", ""),
+            qa_merge_model=os.getenv("YQ_QA_MERGE_MODEL")
+            or os.getenv("OPENAI_MODEL", ""),
+            qa_merge_timeout_seconds=_env_float("YQ_QA_MERGE_TIMEOUT_SECONDS", 300.0),
+            qa_merge_temperature=_env_float("YQ_QA_MERGE_TEMPERATURE", 0.2),
             openviking_rag_project_path=os.getenv(
                 "OPENVIKING_RAG_PROJECT_PATH",
                 r"D:\project\mine\OpenViking\benchmark\RAG",
@@ -264,3 +297,33 @@ class AppConfig:
             ),
             deepread_neighbor_window=os.getenv("DEEPREAD_NEIGHBOR_WINDOW", "1,-1"),
         )
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "service_name": self.service_name,
+            "legacy_backend": self.backend,
+            "qa": {
+                "db_path": self.qa_db_path,
+                "rag_manager_base_url": self.qa_rag_manager_base_url,
+                "rag_manager_timeout_seconds": self.qa_rag_manager_timeout_seconds,
+                "default_method_ids": self.qa_default_method_ids,
+                "max_concurrent_tasks": self.qa_max_concurrent_tasks,
+                "method_timeout_seconds": self.qa_method_timeout_seconds,
+            },
+            "merge": {
+                "enabled": self.qa_merge_enabled,
+                "base_url": self.qa_merge_base_url,
+                "model": self.qa_merge_model,
+                "timeout_seconds": self.qa_merge_timeout_seconds,
+                "temperature": self.qa_merge_temperature,
+                "api_key": _mask_secret(self.qa_merge_api_key),
+            },
+        }
+
+
+def _mask_secret(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 8:
+        return "***"
+    return f"{value[:4]}...{value[-4:]}"

@@ -73,6 +73,3 @@ apps/rag-manager-eval/outputs/
 !**/configs/*.example
 !**/configs/*.yaml.example
 !**/uv.lock
-
-# Local generated backend from aborted experiment. Remove after migration.
-apps/yq-qa-backend/

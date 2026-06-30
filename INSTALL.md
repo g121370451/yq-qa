@@ -1,216 +1,319 @@
-# yq-qa RAG 后端接口服务部署
+# yq-qa 后端部署说明
 
-这个项目提供一套统一 RAG HTTP 接口，可以分别包装：
+`rag-server` 现在是桌面端问答后端。它的主职责是管理异步 QA 任务，
+并通过 `rag-manager` 调用一个或多个 RAG method。
 
-- `ovbot`：转发到已有的 OV-Bot Gateway。
-- `deepread`：直接调用本地 `D:\project\postgraduate\ruc-ov-eval\DeepRead` 实现。
+## 职责边界
 
-两个服务用同一份代码启动，区别只是 `--backend` 和端口。
+`src/yq_qa_rag` 负责：
 
-## 1. 安装依赖
+- 接收前端问题，创建异步问答任务。
+- 调用 `rag-manager` 中已注册并运行的 RAG method。
+- 支持一个 method 回答，也支持多个 method 并行回答。
+- 持久化任务状态、事件日志、每个 method 的回答。
+- 可选调用 OpenAI-compatible 模型合并多个 RAG 答案。
+- 提供 Swagger：`http://127.0.0.1:18082/docs`。
 
-在 `D:\project\mine\yq-qa` 下执行：
+不负责：
+
+- 不直接启动 OpenViking Bot 或 DeepRead worker。
+- 不负责文档入库、删除、更新。
+- 不维护 VLM / embedding 配置。
+- 不做 benchmark eval。
+
+这些由其他服务负责：
+
+```text
+apps/rag-manager          RAG method 注册、启动、停止、入库代理、查询代理
+apps/rag-openviking-bot   OpenViking Bot 标准 RAG worker
+apps/rag-deepread         DeepRead 标准 RAG worker
+apps/rag-manager-eval     benchmark/eval runner
+```
+
+## 安装
+
+在项目根目录执行：
 
 ```powershell
+cd D:\project\mine\yq-qa
 uv sync
 ```
 
-如果要启动 DeepRead 服务，额外安装 DeepRead 运行依赖：
+## 配置
 
-```powershell
-uv sync --extra deepread
+QA 运行配置由前端通过接口写入后端，并持久化到 SQLite。
+所以 `rag-server` 可以不带 `.env` 启动。
+
+默认配置接口：
+
+```http
+GET /v1/config
+PUT /v1/config
 ```
 
-可以复制示例环境文件后再改配置：
+前端需要保存的核心配置：
 
-```powershell
-Copy-Item .env.ovbot.example .env.ovbot
-Copy-Item .env.deepread.example .env.deepread
+```env
+YQ_RAG_MANAGER_BASE_URL=http://127.0.0.1:18081
+YQ_QA_DB=data/yq-qa.sqlite3
+YQ_QA_DEFAULT_METHOD_IDS=openviking-bot-versionrag-chat,deepread-versionrag
+YQ_QA_MAX_CONCURRENT_TASKS=4
+
+YQ_QA_MERGE_ENABLED=true
+YQ_QA_MERGE_BASE_URL=https://api.openai.com/v1
+YQ_QA_MERGE_API_KEY=replace-me
+YQ_QA_MERGE_MODEL=replace-me
 ```
 
-## 2. 标准接口
+如果暂时不需要两个答案合并，前端保存：
 
-两个 RAG 服务都提供同样的接口：
+```env
+YQ_QA_MERGE_ENABLED=false
+```
+
+`.env.yq-qa.example` 只作为开发期“初始化默认值”示例，不是必需文件。
+
+## 启动顺序
+
+先启动 `rag-manager`，并确认需要的 method 已经注册并 running。
+
+```powershell
+cd D:\project\mine\yq-qa\apps\rag-manager
+uv run rag-manager --host 127.0.0.1 --port 18081
+```
+
+然后启动 QA 后端：
+
+```powershell
+cd D:\project\mine\yq-qa
+uv run rag-server --host 127.0.0.1 --port 18082
+```
+
+如果你想用环境变量给数据库里的首次配置提供默认值，也可以：
+
+```powershell
+uv run rag-server --env-file .env.yq-qa --host 127.0.0.1 --port 18082
+```
+
+启动时会打印：
 
 ```text
-GET  /health
-GET  /capabilities
-POST /v1/chat
-POST /v1/chat/stream
-POST /v1/requests/{request_id}/cancel
-POST /v1/sessions
-GET  /v1/sessions
-GET  /v1/sessions/{session_id}
-DELETE /v1/sessions/{session_id}
+service_url
+swagger_url
+db_path
+rag_manager_base_url
+default_method_ids
+merge enabled/model/base_url
 ```
 
-Swagger 地址：
+API key 只会 mask 打印。
 
-```text
-http://127.0.0.1:<port>/docs
+## 主接口
+
+### 健康检查
+
+```http
+GET /health
 ```
 
-## 3. 启动 OV-Bot RAG 服务
+### 查看当前配置
 
-先确保 OV-Bot Gateway 已启动。通常在 OpenViking bot 项目里：
-
-```powershell
-cd D:\project\mine\OpenViking\bot
-uv run vikingbot gateway --port 18790
+```http
+GET /v1/config
 ```
 
-注意：当前 OV-Bot 的 `/bot/v1/chat` 和 `/bot/v1/chat/stream` 路由要求 OpenAPI channel 配置 API Key；如果没配，接口会返回 `503 OpenAPI channel API key is not configured`。你需要在 `ov.conf` 的 `bot.channels` 里配置 `openapi` channel，例如：
+### 查看 rag-manager 的 methods
+
+```http
+GET /v1/rag-methods
+```
+
+### 创建异步问答任务
+
+```http
+POST /v1/qa/tasks
+```
+
+示例：
 
 ```json
 {
-  "bot": {
-    "channels": [
-      {
-        "type": "openapi",
-        "enabled": true,
-        "api_key": "change-me"
-      }
-    ]
+  "question": "Spark 3.5.5 修复了哪些问题？",
+  "method_ids": [
+    "openviking-bot-versionrag-chat",
+    "deepread-versionrag"
+  ],
+  "merge_strategy": "auto",
+  "options": {
+    "target_uri": "viking://resources/"
   }
 }
 ```
 
-然后在 `yq-qa` 启动 OV-Bot 标准接口包装服务：
-
-```powershell
-cd D:\project\mine\yq-qa
-$env:OVBOT_BASE_URL="http://127.0.0.1:18790"
-$env:OVBOT_CHAT_PATH="/bot/v1/chat"
-$env:OVBOT_CHAT_STREAM_PATH="/bot/v1/chat/stream"
-$env:OVBOT_API_KEY="change-me"
-
-uv run rag-server --backend ovbot --host 127.0.0.1 --port 18791
-```
-
-也可以使用 env 文件启动：
-
-```powershell
-uv run rag-server --backend ovbot --env-file .env.ovbot --host 127.0.0.1 --port 18791
-```
-
-Swagger：
+`merge_strategy`：
 
 ```text
-http://127.0.0.1:18791/docs
+auto  多 method 且合并模型可用时自动合并，否则分段拼接
+llm   强制调用合并模型
+none  不调用合并模型，保留并分段拼接各 method 回答
 ```
 
-如果你通过 `openviking-server --with-bot` 的代理访问，则把路径改成：
+### 查看任务列表
 
-```powershell
-$env:OVBOT_BASE_URL="http://127.0.0.1:1933"
-$env:OVBOT_CHAT_PATH="/api/v1/bot/chat"
-$env:OVBOT_CHAT_STREAM_PATH="/api/v1/bot/chat/stream"
+```http
+GET /v1/qa/tasks
+GET /v1/qa/tasks?status=running
 ```
 
-## 4. 启动 DeepRead RAG 服务
+### 查看任务详情
 
-DeepRead 服务需要至少一个 `*_corpus.json`。
-
-如果还没有 corpus，先在 DeepRead 项目里生成：
-
-```powershell
-cd D:\project\postgraduate\ruc-ov-eval
-uv run python -m DeepRead.deepread parse D:\path\to\doc.md --build-embeddings
+```http
+GET /v1/qa/tasks/{task_id}
 ```
 
-然后启动服务：
+返回内容包含：
 
-```powershell
-cd D:\project\mine\yq-qa
+- 任务状态。
+- 每个 method 的回答。
+- 每个 method 的 sources。
+- 合并后的 `merged_answer`。
+- 错误信息。
 
-$env:DEEPREAD_PROJECT_PATH="D:\project\postgraduate\ruc-ov-eval"
-$env:DEEPREAD_CORPUS_PATHS="D:\path\to\doc_corpus.json"
+### 查看任务事件
 
-$env:DEEPREAD_MODEL="你的 Codex 或 OpenAI 兼容模型名"
-$env:DEEPREAD_BASE_URL="https://api.openai.com/v1"
-$env:DEEPREAD_API_KEY="你的模型 API Key"
-
-$env:DEEPREAD_EMBEDDING_MODEL="你的豆包 embedding 模型名"
-$env:DEEPREAD_EMBED_BASE_URL="你的豆包 embedding OpenAI 兼容 base url"
-$env:DEEPREAD_EMBED_API_KEY="你的豆包 embedding API Key"
-
-uv run rag-server --backend deepread --host 127.0.0.1 --port 18800
+```http
+GET /v1/qa/tasks/{task_id}/events
+GET /v1/qa/tasks/{task_id}/events?after_id=10
 ```
 
-也可以使用 env 文件启动：
+### SSE 监听任务事件
 
-```powershell
-uv run rag-server --backend deepread --env-file .env.deepread --host 127.0.0.1 --port 18800
+```http
+GET /v1/qa/tasks/{task_id}/stream
 ```
 
-Swagger：
+### 取消任务
+
+```http
+POST /v1/qa/tasks/{task_id}/cancel
+```
+
+取消是 best-effort：如果请求已经发送给 RAG worker，当前版本只能记录取消信号，
+等 worker 返回后再把任务标记为取消。
+
+## 文档上传和入库
+
+前端可以通过 QA 后端上传文件。上传请求只负责保存文件并创建后台入库 job，
+不会阻塞主进程等待 semantic/embedding 完成。
+
+上传接口：
+
+```http
+POST /v1/documents/upload
+Content-Type: multipart/form-data
+```
+
+字段：
 
 ```text
-http://127.0.0.1:18800/docs
+method_id       目标 RAG method
+files           一个或多个文件
+metadata_json   可选，JSON object
+options_json    可选，JSON object，传给 rag-manager ingestion job
 ```
 
-多个 corpus 用逗号或分号分隔：
+返回：
 
-```powershell
-$env:DEEPREAD_CORPUS_PATHS="D:\a\a_corpus.json;D:\b\b_corpus.json"
+```json
+{
+  "job_id": "...",
+  "method_id": "...",
+  "status": "queued",
+  "documents": []
+}
 ```
 
-## 5. 流式问答请求示例
-
-OV-Bot 服务：
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:18791/v1/chat" `
-  -ContentType "application/json" `
-  -Body '{
-    "request_id": "q-001",
-    "session_id": "s-001",
-    "user_id": "default",
-    "question": "请总结知识库里的核心内容",
-    "options": {
-      "return_sources": true
-    }
-  }'
-```
-
-DeepRead 服务：
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:18800/v1/chat" `
-  -ContentType "application/json" `
-  -Body '{
-    "request_id": "q-002",
-    "session_id": "s-002",
-    "user_id": "default",
-    "question": "这篇文档的实验结论是什么？",
-    "options": {
-      "retrieval": "hybrid",
-      "top_k": 3,
-      "return_sources": true
-    }
-  }'
-```
-
-## 6. 服务端口规划
-
-建议本地开发阶段：
+后台 job 会调用：
 
 ```text
-OV-Bot Gateway          18790
-OV-Bot 标准包装服务      18791
-DeepRead 标准服务        18800
-后续 yq-qa 协调后端      18080
+rag-manager /v1/rag-methods/{method_id}/ingestion-jobs
 ```
 
-桌面端后续只需要访问 `yq-qa` 协调后端；协调后端再调用 `18791` 和 `18800`。
+查看入库队列：
 
-## 7. 注意事项
+```http
+GET /v1/documents/ingestion-jobs
+GET /v1/documents/ingestion-jobs?status=running
+```
 
-- `ovbot` 包装服务本身不做 RAG，它只把统一接口转换成 OV-Bot Gateway 请求。
-- `deepread` 服务当前使用本地 DeepRead 的同步 agent 调用，流式接口会先发 `start/status`，完成后再发完整答案。
-- DeepRead 的取消是 best-effort：接口会停止当前 SSE 输出，但 DeepRead 内部已经发出的阻塞模型请求可能要等本轮返回。
-- 并发问题必须使用不同的 `request_id`；如果不想共享上下文，也使用不同的 `session_id`。
+查看某个入库 job：
+
+```http
+GET /v1/documents/ingestion-jobs/{job_id}
+```
+
+返回里有前端进度条需要的字段：
+
+```json
+{
+  "progress": {
+    "total_documents": 10,
+    "completed_documents": 4,
+    "failed_documents": 0,
+    "running_documents": 2,
+    "pending_documents": 4,
+    "progress_percent": 40.0,
+    "message": "Ingestion running"
+  }
+}
+```
+
+查看文字事件：
+
+```http
+GET /v1/documents/ingestion-jobs/{job_id}/events
+```
+
+SSE 监听进度：
+
+```http
+GET /v1/documents/ingestion-jobs/{job_id}/stream
+```
+
+取消入库 job：
+
+```http
+POST /v1/documents/ingestion-jobs/{job_id}/cancel
+```
+
+取消也是 best-effort：如果任务已经提交给 `rag-manager`，当前版本会记录取消信号，
+但不能强制中断已经在 RAG worker 内部执行的 semantic/embedding。
+
+上传目录由前端配置：
+
+```http
+PUT /v1/config
+```
+
+示例：
+
+```json
+{
+  "upload_dir": "data/uploads",
+  "max_concurrent_ingestion_jobs": 2
+}
+```
+
+## 兼容接口
+
+旧的单 RAG wrapper 接口仍保留，主要用于调试：
+
+```text
+GET  /capabilities
+POST /v1/chat
+POST /v1/chat/stream
+POST /v1/requests/{request_id}/cancel
+```
+
+它们仍然由 `RAG_BACKEND=openviking_rag/deepread/ovbot` 和旧 adapter 配置控制。
+桌面端主流程建议使用 `/v1/qa/tasks`。
