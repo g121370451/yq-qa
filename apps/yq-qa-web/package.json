@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:yq": "vite --host 127.0.0.1 --base /yq-qa/",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
+    "build:yq": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build --base /yq-qa/",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
