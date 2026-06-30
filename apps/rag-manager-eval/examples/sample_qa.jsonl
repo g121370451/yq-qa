@@ -1,0 +1,2 @@
+{"doc_name":"sample","question":"What does this sample test?","answer":"It tests rag-manager evaluation wiring.","evidence":["rag-manager evaluation"]}
+{"doc_name":"sample","question":"Which endpoint is used for answers?","answer":"/chat","evidence":["/chat"]}

@@ -1,0 +1,70 @@
+dataset:
+  name: financebench
+  loader: ov_test_adapter
+  ov_test_path: D:/project/postgraduate/ruc-ov-eval/ov_test
+  adapter_module: src.adapters.finance_bench_adapter
+  adapter_class: FinanceBenchAdapter
+  raw_data_path: ../data/FinanceBench/data/financebench_open_source.jsonl
+rag_manager:
+  base_url: "${YQ_RAG_MANAGER_BASE_URL}"
+  method_id: openviking-bot-financebench-retrieve
+  auto_create: true
+  update_existing: true
+  backend_type: openviking_bot
+  display_name: OpenViking Bot FinanceBench Retrieve
+  method_config:
+    project_path: D:/project/mine/yq-qa/apps/rag-openviking-bot
+    ov_conf: openviking-financebench.ov.conf
+    env:
+      YQ_OPENVIKING_EMBEDDING_BASE_URL: "${YQ_OPENVIKING_EMBEDDING_BASE_URL}"
+      YQ_OPENVIKING_EMBEDDING_API_KEY: "${YQ_OPENVIKING_EMBEDDING_API_KEY}"
+      YQ_OPENVIKING_EMBEDDING_MODEL: "${YQ_OPENVIKING_EMBEDDING_MODEL}"
+      YQ_OPENVIKING_VLM_BASE_URL: "${YQ_OPENVIKING_VLM_BASE_URL}"
+      YQ_OPENVIKING_VLM_API_KEY: "${YQ_OPENVIKING_VLM_API_KEY}"
+      YQ_OPENVIKING_VLM_MODEL: "${YQ_OPENVIKING_VLM_MODEL}"
+    server_mode: managed
+    server_with_bot: true
+    bot_route: server
+    gateway_mode: disabled
+    cleanup_on_start: true
+    logs_dir: ../outputs/openviking-financebench/logs
+  auto_start: true
+  timeout_seconds: 1200
+request:
+  mode: retrieve
+  top_k: 3
+  options:
+    target_uri: viking://resources/
+judge:
+  enabled: true
+  base_url: "${YQ_RAG_EVAL_JUDGE_BASE_URL}"
+  model: "${YQ_RAG_EVAL_JUDGE_MODEL}"
+  api_key: "${YQ_RAG_EVAL_JUDGE_API_KEY}"
+  timeout_seconds: "${YQ_RAG_EVAL_JUDGE_TIMEOUT_SECONDS}"
+ingestion:
+  enabled: true
+  doc_output_dir: ../outputs/openviking-financebench/prepared_docs
+  folder_import: true
+  folder_document_id: financebench-documents
+  folder_title: FinanceBench Documents
+  include_glob: 3M_2018_10K.pdf
+  max_documents: 1
+  options: {}
+execution:
+  stage: all
+  max_queries: 2
+  max_workers: 1
+output:
+  output_dir: ../outputs/openviking-financebench-retrieve
+required_env:
+  - YQ_RAG_MANAGER_BASE_URL
+  - YQ_RAG_EVAL_JUDGE_BASE_URL
+  - YQ_RAG_EVAL_JUDGE_MODEL
+  - YQ_RAG_EVAL_JUDGE_API_KEY
+  - YQ_RAG_EVAL_JUDGE_TIMEOUT_SECONDS
+  - YQ_OPENVIKING_EMBEDDING_BASE_URL
+  - YQ_OPENVIKING_EMBEDDING_API_KEY
+  - YQ_OPENVIKING_EMBEDDING_MODEL
+  - YQ_OPENVIKING_VLM_BASE_URL
+  - YQ_OPENVIKING_VLM_API_KEY
+  - YQ_OPENVIKING_VLM_MODEL

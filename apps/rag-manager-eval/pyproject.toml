@@ -1,0 +1,23 @@
+[project]
+name = "yq-rag-manager-eval"
+version = "0.1.0"
+description = "Dataset evaluation runner for YQ RAG Manager."
+readme = "INSTALL.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "pydantic>=2.8.0",
+    "pymupdf>=1.28.0",
+    "pyyaml>=6.0.0",
+    "tqdm>=4.66.0",
+]
+
+[project.scripts]
+rag-manager-eval = "yq_rag_manager_eval.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yq_rag_manager_eval"]

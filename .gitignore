@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+*.pyo
+*.so
+.Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and runtime files
+logs/
+*.log
+*.pid
+*.tmp
+*.temp
+
+# SQLite and local databases
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+*.db-shm
+*.db-wal
+
+# App runtime data
+apps/*/data/
+apps/*/logs/
+apps/*/outputs/
+apps/rag-openviking-bot/.openviking/
+
+# Evaluation datasets and generated artifacts are local/large.
+apps/rag-manager-eval/data/
+apps/rag-manager-eval/outputs/
+
+# Keep config examples and lockfiles tracked.
+!**/.env.example
+!**/.env.*.example
+!**/configs/*.example
+!**/configs/*.yaml.example
+!**/uv.lock
+
+# Local generated backend from aborted experiment. Remove after migration.
+apps/yq-qa-backend/
