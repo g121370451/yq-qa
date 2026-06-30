@@ -84,3 +84,11 @@ apps/rag-manager-eval/outputs/
 !**/configs/*.example
 !**/configs/*.yaml.example
 !**/uv.lock
+
+# Local OpenViking config files. These usually contain local paths and API keys.
+ov.conf
+**/ov.conf
+*.ov.conf
+**/*.ov.conf
+!*.ov.conf.example
+!**/*.ov.conf.example
