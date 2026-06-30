@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from yq_qa_rag import __version__
@@ -59,6 +60,12 @@ def create_app(config: AppConfig) -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.on_event("startup")
@@ -125,6 +132,15 @@ def create_app(config: AppConfig) -> FastAPI:
     async def list_rag_methods() -> dict:
         try:
             return await RagManagerClient(task_store.get_runtime_config()).list_methods()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/v1/rag-methods/{method_id}/documents", tags=["rag-manager"])
+    async def list_rag_method_documents(method_id: str) -> dict:
+        try:
+            return await RagManagerClient(task_store.get_runtime_config()).list_documents(
+                method_id=method_id
+            )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -243,9 +259,16 @@ def create_app(config: AppConfig) -> FastAPI:
         files: list[UploadFile] = File(...),
         metadata_json: str = Form(default="{}"),
         options_json: str = Form(default="{}"),
+        relative_paths_json: str = Form(default="[]"),
     ) -> DocumentUploadCreated:
         metadata = _parse_json_object(metadata_json, "metadata_json")
         options = _parse_json_object(options_json, "options_json")
+        relative_paths = _parse_json_string_list(relative_paths_json, "relative_paths_json")
+        if relative_paths and len(relative_paths) != len(files):
+            raise HTTPException(
+                status_code=400,
+                detail="relative_paths_json length must match uploaded files length",
+            )
         runtime_config = task_store.get_runtime_config()
         upload_root = _resolve_upload_root(runtime_config.upload_dir)
         batch_id = str(uuid4())
@@ -253,8 +276,15 @@ def create_app(config: AppConfig) -> FastAPI:
         batch_dir.mkdir(parents=True, exist_ok=True)
         documents: list[UploadedDocument] = []
         for index, file in enumerate(files):
-            filename = _safe_filename(file.filename or f"document-{index}")
-            path = batch_dir / filename
+            raw_relative_path = (
+                relative_paths[index]
+                if index < len(relative_paths)
+                else file.filename or f"document-{index}"
+            )
+            safe_relative_path = _safe_relative_path(raw_relative_path)
+            relative_path_text = str(safe_relative_path).replace("\\", "/")
+            path = batch_dir / safe_relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
             size = 0
             with path.open("wb") as target:
                 while True:
@@ -264,17 +294,21 @@ def create_app(config: AppConfig) -> FastAPI:
                     size += len(chunk)
                     target.write(chunk)
             document_id = str(
-                metadata.get("document_id")
-                or f"{batch_id}-{index}-{path.stem}"
+                (metadata.get("document_id") if len(files) == 1 else None)
+                or f"{batch_id}-{index}-{_safe_document_id(relative_path_text)}"
             )
             documents.append(
                 UploadedDocument(
                     document_id=document_id,
-                    filename=filename,
+                    filename=relative_path_text,
                     path=str(path.resolve()),
-                    title=str(metadata.get("title") or filename),
+                    title=str((metadata.get("title") if len(files) == 1 else None) or relative_path_text),
                     size_bytes=size,
-                    metadata={**metadata, "original_filename": file.filename},
+                    metadata={
+                        **metadata,
+                        "original_filename": file.filename,
+                        "relative_path": relative_path_text,
+                    },
                 )
             )
         if not documents:
@@ -483,10 +517,40 @@ def _parse_json_object(raw: str, field_name: str) -> dict:
     return value
 
 
+def _parse_json_string_list(raw: str, field_name: str) -> list[str]:
+    try:
+        value = json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be valid JSON") from exc
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be a JSON string array")
+    return value
+
+
 def _safe_filename(filename: str) -> str:
     name = filename.replace("\\", "/").split("/")[-1].strip()
     name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name)
     return name or "document"
+
+
+def _safe_relative_path(value: str):
+    from pathlib import Path
+
+    raw_parts = [
+        part.strip()
+        for part in value.replace("\\", "/").split("/")
+        if part.strip() and part.strip() not in {".", ".."}
+    ]
+    if not raw_parts:
+        raw_parts = ["document"]
+    return Path(*[_safe_filename(part) for part in raw_parts])
+
+
+def _safe_document_id(value: str) -> str:
+    document_id = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
+    return document_id or "document"
 
 
 def _resolve_upload_root(value: str):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -23,6 +24,16 @@ class RagManagerClient:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(f"{self.base_url}/v1/rag-methods")
         response.raise_for_status()
+        return response.json()
+
+    async def list_documents(self, *, method_id: str) -> dict[str, Any]:
+        encoded_method_id = quote(method_id, safe="")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/v1/rag-methods/{encoded_method_id}/documents"
+            )
+        if response.status_code >= 400:
+            raise RuntimeError(f"rag-manager {response.status_code}: {response.text}")
         return response.json()
 
     async def chat(

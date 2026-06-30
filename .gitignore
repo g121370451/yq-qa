@@ -20,6 +20,16 @@ dist/
 build/
 *.egg-info/
 
+# Node / frontend
+node_modules/
+apps/*/node_modules/
+apps/*/dist/
+apps/*/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # Virtual environments
 .venv/
 venv/
