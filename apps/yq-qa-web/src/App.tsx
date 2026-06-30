@@ -692,8 +692,18 @@ function QaPage({
   const duplicateTask = findDuplicateTask(tasks, question);
 
   useEffect(() => {
-    if (selectedMethods.length === 0) setSelectedMethods(config.default_method_ids);
-  }, [config.default_method_ids]);
+    const available = new Set(methods.map((method) => method.method_id));
+    const validSelected = selectedMethods.filter((methodId) => available.has(methodId));
+    if (validSelected.length !== selectedMethods.length) {
+      setSelectedMethods(validSelected);
+      return;
+    }
+    if (validSelected.length > 0) return;
+    const firstConfigured = config.default_method_ids.find((methodId) => available.has(methodId));
+    const firstAvailable = methods[0]?.method_id;
+    const nextMethod = firstConfigured || firstAvailable;
+    if (nextMethod) setSelectedMethods([nextMethod]);
+  }, [config.default_method_ids, methods, selectedMethods]);
 
   useEffect(() => {
     if (!selectedTaskId && tasks.length > 0) setSelectedTaskId(tasks[0].task_id);
@@ -793,8 +803,8 @@ function QaPage({
             />
           )}
           <div className="composer-grid">
-            <Field label="Method">
-              <MultiSelect options={methods.map((method) => method.method_id)} selected={selectedMethods} onChange={setSelectedMethods} />
+            <Field label="回答 Method">
+              <QaMethodPicker methods={methods} selected={selectedMethods} onChange={setSelectedMethods} />
             </Field>
             <Field label="合并策略">
               <select value={mergeStrategy} onChange={(event) => setMergeStrategy(event.target.value as MergeStrategy)}>
@@ -808,7 +818,7 @@ function QaPage({
             <summary>Options JSON</summary>
             <textarea value={options} onChange={(event) => setOptions(event.target.value)} />
           </details>
-          <button className="primary" disabled={!question.trim() || submitting} onClick={() => void submit()}>
+          <button className="primary" disabled={!question.trim() || selectedMethods.length === 0 || submitting} onClick={() => void submit()}>
             {submitting ? <Loader2 className="spin" size={18} /> : <MessageSquareText size={18} />}
             提交
           </button>
@@ -854,32 +864,27 @@ function QaHistoryList({
 
 function QaAnswerDetail({ task }: { task: QaTask }) {
   const results = task.results || [];
+  const fallback = results.find((result) => result.status === "succeeded" && result.answer)?.answer;
+  const answer = task.merged_answer || fallback || "";
   if (task.status === "queued") {
     return <div className="empty">问题已进入队列</div>;
   }
-  if (task.status === "running" && results.length === 0) {
+  if (task.status === "running" && !answer) {
     return <div className="empty">正在等待 method 返回答案</div>;
   }
   return (
     <div className="answer-stack">
-      {task.merged_answer && (
+      {answer && (
         <div className="merged answer-block">
           <b>最终答案</b>
-          <p>{task.merged_answer}</p>
+          <p>{answer}</p>
         </div>
       )}
-      {results.map((result) => (
-        <div className="answer answer-block" key={result.method_id}>
-          <div className="answer-head">
-            <b>{result.method_id}</b>
-            <StatusBadge status={result.status} />
-          </div>
-          {result.error ? <p className="error-text">{result.error}</p> : <p>{result.answer}</p>}
-          {result.sources?.length > 0 && <SourceList sources={result.sources} />}
-        </div>
-      ))}
       {task.error && <p className="error-text">{task.error}</p>}
-      {results.length === 0 && !task.merged_answer && task.status !== "running" && <div className="empty">暂无答案</div>}
+      {results.length > 0 && !answer && (
+        <div className="empty">RAG method 未返回可展示答案</div>
+      )}
+      {results.length === 0 && !answer && task.status !== "running" && <div className="empty">暂无答案</div>}
     </div>
   );
 }
@@ -1126,6 +1131,46 @@ function SourceList({ sources }: { sources: { title?: string | null; snippet?: s
         </div>
       ))}
     </details>
+  );
+}
+
+function QaMethodPicker({
+  methods,
+  selected,
+  onChange,
+}: {
+  methods: RagMethod[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+}) {
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  if (methods.length === 0) {
+    return <span className="empty-inline">无可用 method</span>;
+  }
+  return (
+    <div className="qa-method-picker">
+      {methods.map((method) => {
+        const isSelected = selectedSet.has(method.method_id);
+        return (
+          <button
+            className={isSelected ? "qa-method-option selected" : "qa-method-option"}
+            key={method.method_id}
+            onClick={() => {
+              if (isSelected && selected.length === 1) return;
+              if (isSelected) onChange(selected.filter((item) => item !== method.method_id));
+              else onChange([...selected, method.method_id]);
+            }}
+            type="button"
+          >
+            <div className="qa-method-option-head">
+              <strong>{method.display_name || method.method_id}</strong>
+              {isSelected ? <CheckCircle2 size={17} /> : <span className="select-dot" />}
+            </div>
+            <span className="qa-method-status">{method.status || "unknown"}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
