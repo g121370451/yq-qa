@@ -25,6 +25,12 @@ cd /www/wwwroot/default/yq-qa
 sudo bash scripts/deploy/start-yq-qa.sh
 ```
 
+如果当前用户能找到 `uv`，但 `sudo` 后找不到：
+
+```bash
+sudo YQ_UV_BIN="$(command -v uv)" bash scripts/deploy/start-yq-qa.sh
+```
+
 默认启动并守护：
 
 - `yq-openviking.service`: `127.0.0.1:20100`

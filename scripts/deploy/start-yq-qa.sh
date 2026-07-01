@@ -4,8 +4,49 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${YQ_QA_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
+find_uv_bin() {
+  if [[ -n "${YQ_UV_BIN:-}" ]]; then
+    printf '%s\n' "${YQ_UV_BIN}"
+    return 0
+  fi
+
+  local found=""
+  found="$(command -v uv 2>/dev/null || true)"
+  if [[ -n "${found}" ]]; then
+    printf '%s\n' "${found}"
+    return 0
+  fi
+
+  local candidates=(
+    "/usr/local/bin/uv"
+    "/usr/bin/uv"
+    "/bin/uv"
+    "/opt/uv/uv"
+  )
+
+  if [[ -n "${HOME:-}" ]]; then
+    candidates+=("${HOME}/.local/bin/uv" "${HOME}/.cargo/bin/uv")
+  fi
+
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    local sudo_home=""
+    sudo_home="$(getent passwd "${SUDO_USER}" 2>/dev/null | cut -d: -f6 || true)"
+    if [[ -n "${sudo_home}" ]]; then
+      candidates+=("${sudo_home}/.local/bin/uv" "${sudo_home}/.cargo/bin/uv")
+    fi
+  fi
+
+  local path
+  for path in "${candidates[@]}"; do
+    if [[ -x "${path}" ]]; then
+      printf '%s\n' "${path}"
+      return 0
+    fi
+  done
+}
+
 OV_CONF="${YQ_OV_CONF:-${APP_ROOT}/config/ov.conf}"
-UV_BIN="${YQ_UV_BIN:-$(command -v uv || true)}"
+UV_BIN="$(find_uv_bin)"
 PYTHON_BIN="${YQ_PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
 
 OPENVIKING_HOST="${YQ_OPENVIKING_HOST:-127.0.0.1}"
