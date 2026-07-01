@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   AlertCircle,
   Bot,
+  ChevronDown,
   CheckCircle2,
+  Copy,
   Database,
   FileText,
   FileUp,
@@ -13,10 +17,13 @@ import {
   Save,
   Settings,
   LogOut,
+  PanelLeftOpen,
+  Plus,
   Play,
   XCircle,
   RotateCw,
   Square,
+  Send,
 } from "lucide-react";
 import {
   ApiError,
@@ -36,7 +43,6 @@ import {
   logout,
   openEventStream,
   restartMethod,
-  saveBackendUrl,
   startMethod,
   stopMethod,
   updateConfig,
@@ -63,7 +69,7 @@ const emptyConfig: RuntimeConfig = {
 };
 
 export function App() {
-  const [backendUrl, setBackendUrl] = useState(getInitialBackendUrl());
+  const [backendUrl] = useState(getInitialBackendUrl());
   const [activeView, setActiveView] = useState<View>("qa");
   const [config, setConfig] = useState<RuntimeConfig>(emptyConfig);
   const [methods, setMethods] = useState<RagMethod[]>([]);
@@ -78,7 +84,6 @@ export function App() {
   async function refreshAll() {
     setError(null);
     try {
-      saveBackendUrl(backendUrl);
       const [nextConfig, nextMethods, nextTasks, nextJobs] = await Promise.all([
         getConfig(backendUrl),
         listMethods(backendUrl).catch(() => []),
@@ -111,7 +116,6 @@ export function App() {
 
   async function bootstrap() {
     setError(null);
-    saveBackendUrl(backendUrl);
     try {
       const user = await getCurrentUser(backendUrl);
       setCurrentUser(user);
@@ -139,7 +143,6 @@ export function App() {
 
   async function handleLogin(username: string, password: string) {
     setError(null);
-    saveBackendUrl(backendUrl);
     const response = await login(backendUrl, username, password);
     setCurrentUser(response.user);
     setAuthRequired(false);
@@ -160,8 +163,6 @@ export function App() {
   if (authRequired || (!currentUser && status === "未登录")) {
     return (
       <LoginPage
-        backendUrl={backendUrl}
-        setBackendUrl={setBackendUrl}
         onLogin={handleLogin}
       />
     );
@@ -186,14 +187,12 @@ export function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <div className="backend-control">
-            <label>Backend</label>
-            <input value={backendUrl} onChange={(event) => setBackendUrl(event.target.value)} />
+          <div className="topbar-actions">
+            <StatusPill status={status} />
             <button className="icon-button" onClick={() => void refreshAll()} title="刷新">
               <RefreshCw size={18} />
             </button>
           </div>
-          <StatusPill status={status} />
           {currentUser && (
             <div className="user-control">
               <span>{currentUser.display_name || currentUser.username}</span>
@@ -241,12 +240,8 @@ export function App() {
 }
 
 function LoginPage({
-  backendUrl,
-  setBackendUrl,
   onLogin,
 }: {
-  backendUrl: string;
-  setBackendUrl: (value: string) => void;
   onLogin: (username: string, password: string) => Promise<void>;
 }) {
   const [username, setUsername] = useState("admin");
@@ -276,9 +271,6 @@ function LoginPage({
             <span>登录后继续</span>
           </div>
         </div>
-        <Field label="Backend">
-          <input value={backendUrl} onChange={(event) => setBackendUrl(event.target.value)} />
-        </Field>
         <Field label="用户名">
           <input value={username} onChange={(event) => setUsername(event.target.value)} />
         </Field>
@@ -686,6 +678,7 @@ function QaPage({
   const [mergeStrategy, setMergeStrategy] = useState<MergeStrategy>("auto");
   const [options, setOptions] = useState("{\"target_uri\":\"viking://resources/\"}");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.task_id || null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const streams = useRef<Record<string, EventSource>>({});
   const selectedTask = tasks.find((task) => task.task_id === selectedTaskId) || tasks[0] || null;
@@ -750,7 +743,15 @@ function QaPage({
 
   return (
     <section className="qa-workspace">
-      <aside className="panel qa-history">
+      {historyOpen && (
+        <button
+          className="drawer-backdrop"
+          type="button"
+          aria-label="关闭问题历史"
+          onClick={() => setHistoryOpen(false)}
+        />
+      )}
+      <aside className={historyOpen ? "panel qa-history open" : "panel qa-history"}>
         <div className="panel-title-row">
           <PanelTitle icon={<MessageSquareText />} title="问题历史" />
           <button className="icon-button" onClick={() => void refreshTaskList(backendUrl, setTasks, setError)} title="刷新历史">
@@ -760,22 +761,30 @@ function QaPage({
         <QaHistoryList
           tasks={tasks}
           selectedTaskId={selectedTask?.task_id || null}
-          onSelect={setSelectedTaskId}
+          onSelect={(taskId) => {
+            setSelectedTaskId(taskId);
+            setHistoryOpen(false);
+          }}
         />
       </aside>
 
       <section className="qa-main">
         <div className="qa-detail">
-          <div className="panel question-panel">
-            <PanelTitle icon={<MessageSquareText />} title="问题" />
+          <div className="panel question-panel qa-current-question">
+            <button className="secondary compact-button" type="button" onClick={() => setHistoryOpen(true)}>
+              <PanelLeftOpen size={16} />
+              历史
+            </button>
             {selectedTask ? (
-              <>
+              <div className="current-question-body">
                 <div className="question-text">{selectedTask.question}</div>
                 <div className="qa-detail-meta">
                   <StatusBadge status={selectedTask.status} />
-                  <span>{selectedTask.method_ids.join(", ")}</span>
+                  <span className="qa-method-meta" title={selectedTask.method_ids.join(", ")}>
+                    {selectedTask.method_ids.join(", ")}
+                  </span>
                 </div>
-              </>
+              </div>
             ) : (
               <div className="empty">还没有选中的问题</div>
             )}
@@ -788,40 +797,57 @@ function QaPage({
         </div>
 
         <div className="panel qa-composer">
-          <Field label="问题">
+          <div className="composer-shell">
             <textarea
               className="composer-input"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="输入一个单轮问题"
+              placeholder="随心输入"
             />
-          </Field>
-          {duplicateTask && (
-            <DuplicateQuestionNotice
-              task={duplicateTask}
-              onView={() => setSelectedTaskId(duplicateTask.task_id)}
-            />
-          )}
-          <div className="composer-grid">
-            <Field label="回答 Method">
-              <QaMethodPicker methods={methods} selected={selectedMethods} onChange={setSelectedMethods} />
-            </Field>
-            <Field label="合并策略">
-              <select value={mergeStrategy} onChange={(event) => setMergeStrategy(event.target.value as MergeStrategy)}>
-                <option value="auto">auto</option>
-                <option value="llm">llm</option>
-                <option value="none">none</option>
-              </select>
-            </Field>
+            {duplicateTask && (
+              <DuplicateQuestionNotice
+                task={duplicateTask}
+                onView={() => setSelectedTaskId(duplicateTask.task_id)}
+              />
+            )}
+            <div className="composer-footer">
+              <div className="composer-footer-left">
+                <details className="composer-popover options-popover">
+                  <summary className="composer-icon-trigger" title="Options JSON">
+                    <Plus size={18} />
+                  </summary>
+                  <div className="composer-popover-panel options-panel">
+                    <Field label="Options JSON">
+                      <textarea value={options} onChange={(event) => setOptions(event.target.value)} />
+                    </Field>
+                  </div>
+                </details>
+                <details className="composer-popover method-popover">
+                  <summary className="composer-chip-trigger" title={selectedMethods.join(", ") || "选择 Method"}>
+                    <Bot size={16} />
+                    <span>{selectedMethodLabel(methods, selectedMethods)}</span>
+                    <ChevronDown size={15} />
+                  </summary>
+                  <div className="composer-popover-panel method-panel">
+                    <QaMethodPicker methods={methods} selected={selectedMethods} onChange={setSelectedMethods} />
+                  </div>
+                </details>
+              </div>
+              <div className="composer-footer-right">
+                <label className="compact-select-wrap" title="合并策略">
+                  <select value={mergeStrategy} onChange={(event) => setMergeStrategy(event.target.value as MergeStrategy)}>
+                    <option value="auto">auto</option>
+                    <option value="llm">llm</option>
+                    <option value="none">none</option>
+                  </select>
+                  <ChevronDown size={15} />
+                </label>
+                <button className="primary send-button" disabled={!question.trim() || selectedMethods.length === 0 || submitting} onClick={() => void submit()} title="提交">
+                  {submitting ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                </button>
+              </div>
+            </div>
           </div>
-          <details className="composer-options">
-            <summary>Options JSON</summary>
-            <textarea value={options} onChange={(event) => setOptions(event.target.value)} />
-          </details>
-          <button className="primary" disabled={!question.trim() || selectedMethods.length === 0 || submitting} onClick={() => void submit()}>
-            {submitting ? <Loader2 className="spin" size={18} /> : <MessageSquareText size={18} />}
-            提交
-          </button>
         </div>
       </section>
     </section>
@@ -863,9 +889,18 @@ function QaHistoryList({
 }
 
 function QaAnswerDetail({ task }: { task: QaTask }) {
+  const [copied, setCopied] = useState(false);
   const results = task.results || [];
   const fallback = results.find((result) => result.status === "succeeded" && result.answer)?.answer;
   const answer = task.merged_answer || fallback || "";
+
+  async function copyAnswer() {
+    if (!answer) return;
+    await copyText(answer);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
   if (task.status === "queued") {
     return <div className="empty">问题已进入队列</div>;
   }
@@ -875,9 +910,17 @@ function QaAnswerDetail({ task }: { task: QaTask }) {
   return (
     <div className="answer-stack">
       {answer && (
-        <div className="merged answer-block">
-          <b>最终答案</b>
-          <p>{answer}</p>
+        <div className="answer-reader">
+          <div className="answer-toolbar">
+            <strong>最终答案</strong>
+            <button className="secondary compact-button" type="button" onClick={() => void copyAnswer()} title="复制最终答案">
+              {copied ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+              {copied ? "已复制" : "复制"}
+            </button>
+          </div>
+          <article className="final-answer markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+          </article>
         </div>
       )}
       {task.error && <p className="error-text">{task.error}</p>}
@@ -1134,6 +1177,16 @@ function SourceList({ sources }: { sources: { title?: string | null; snippet?: s
   );
 }
 
+function selectedMethodLabel(methods: RagMethod[], selected: string[]): string {
+  if (selected.length === 0) return "选择 Method";
+  const labels = selected.map((methodId) => {
+    const method = methods.find((item) => item.method_id === methodId);
+    return method?.display_name || methodId;
+  });
+  if (labels.length === 1) return labels[0];
+  return `${labels[0]} +${labels.length - 1}`;
+}
+
 function QaMethodPicker({
   methods,
   selected,
@@ -1310,6 +1363,22 @@ function upsert<T, K extends keyof T>(items: T[], item: T, key: K): T[] {
   const exists = items.some((current) => current[key] === item[key]);
   if (!exists) return [item, ...items];
   return items.map((current) => current[key] === item[key] ? item : current);
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
 }
 
 function errorMessage(error: unknown): string {
